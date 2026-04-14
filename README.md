@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Enterprise-grade, multi-agent financial planning SaaS built on AWS + OpenAI Agents SDK</strong><br/>
-  Researches markets, ingests knowledge, analyzes portfolios, generates charts, and projects retirement outcomes.
+  Researches markets and ingests knowledge.
 </p>
 
 
@@ -19,7 +19,6 @@
   <img src="https://img.shields.io/badge/S3%20Vectors-16a34a?style=for-the-badge&logo=amazonaws&logoColor=white" alt="S3 Vectors" />
   <img src="https://img.shields.io/badge/Lambda-ff9900?style=for-the-badge&logo=awslambda&logoColor=white" alt="Lambda" />
   <img src="https://img.shields.io/badge/App%20Runner-FF9900?style=for-the-badge&logo=amazonaws&logoColor=white" alt="App Runner" />
-  <img src="https://img.shields.io/badge/SQS-ff9900?style=for-the-badge&logo=amazonaws&logoColor=white" alt="SQS" />
   <img src="https://img.shields.io/badge/Terraform-7B42BC?style=for-the-badge&logo=terraform&logoColor=white" alt="Terraform" />
   <img src="https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker" />
 </p>
