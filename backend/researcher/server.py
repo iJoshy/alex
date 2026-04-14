@@ -3,6 +3,7 @@ Alex Researcher Service - Investment Advice Agent
 """
 
 import os
+import asyncio
 import logging
 from datetime import datetime, UTC
 from typing import Optional
@@ -12,17 +13,26 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 from agents import Agent, Runner, trace
 from agents.extensions.models.litellm_model import LitellmModel
+from agents.exceptions import AgentsException, MaxTurnsExceeded, ModelBehaviorError
+
+# Load environment before importing local modules that may read env vars
+load_dotenv(override=True)
 
 # Suppress LiteLLM warnings about optional dependencies
 logging.getLogger("LiteLLM").setLevel(logging.CRITICAL)
 
 # Import from our modules
-from context import get_agent_instructions, DEFAULT_RESEARCH_PROMPT
+from context import build_research_brief, get_agent_instructions, render_research_task
 from mcp_servers import create_playwright_mcp_server
-from tools import ingest_financial_document
-
-# Load environment
-load_dotenv(override=True)
+from tools import (
+    ResearchRunContext,
+    add_todo_item,
+    complete_todo_item,
+    get_source_log,
+    get_todo_status,
+    ingest_financial_document,
+    record_source,
+)
 
 app = FastAPI(title="Alex Researcher Service")
 
@@ -32,45 +42,125 @@ class ResearchRequest(BaseModel):
     topic: Optional[str] = None  # Optional - if not provided, agent picks a topic
 
 
-async def run_research_agent(topic: str = None) -> str:
+def _resolve_bedrock_settings() -> tuple[str, str]:
+    """Resolve Bedrock region and model with safe defaults for this project."""
+    bedrock_region = (
+        os.getenv("BEDROCK_REGION") or os.getenv("RESEARCHER_BEDROCK_REGION") or "us-west-2"
+    ).strip()
+
+    raw_model_id = (
+        os.getenv("BEDROCK_MODEL_ID")
+        or os.getenv("RESEARCHER_BEDROCK_MODEL")
+        or "openai.gpt-oss-120b-1:0"
+    ).strip()
+    model = raw_model_id if raw_model_id.startswith("bedrock/") else f"bedrock/{raw_model_id}"
+    return bedrock_region, model
+
+
+def _resolve_runtime_limits() -> tuple[int, int, int]:
+    """Resolve runtime limits to keep requests under App Runner timeout."""
+    mcp_timeout_seconds = int(os.getenv("RESEARCHER_MCP_TIMEOUT_SECONDS", "30"))
+    max_turns = int(os.getenv("RESEARCHER_MAX_TURNS", "14"))
+    request_timeout_seconds = int(os.getenv("RESEARCHER_REQUEST_TIMEOUT_SECONDS", "75"))
+    return mcp_timeout_seconds, max_turns, request_timeout_seconds
+
+
+def _get_fallback_instructions() -> str:
+    """Instructions used when browser-backed flow fails or times out."""
+    return """You are Alex, an investment research agent in fallback mode.
+
+Your browsing tools are unavailable in this run. Produce a concise best-effort analysis using general
+market knowledge, clearly label uncertainty, and avoid fabricated specifics.
+
+Required steps:
+1. Create a short checklist with add_todo_item.
+2. Provide a concise analysis with:
+   - Executive Summary
+   - What We Know vs Unknown
+   - Recommendation and Risks
+3. Mark checklist items complete.
+4. Save final analysis once with ingest_financial_document.
+"""
+
+
+async def _run_fallback_agent(
+    query: str, model: LitellmModel, context: ResearchRunContext
+) -> str:
+    """Fallback run without MCP browser dependency."""
+    fallback_query = (
+        f"{query}\n\n"
+        "Fallback mode trigger: browser workflow failed or timed out. "
+        "Proceed without browsing and explicitly mention this limitation."
+    )
+    fallback_agent = Agent[ResearchRunContext](
+        name="Alex Investment Researcher (Fallback)",
+        instructions=_get_fallback_instructions(),
+        model=model,
+        tools=[
+            add_todo_item,
+            complete_todo_item,
+            get_todo_status,
+            get_source_log,
+            ingest_financial_document,
+        ],
+    )
+    fallback_result = await Runner.run(
+        fallback_agent,
+        input=fallback_query,
+        context=context,
+        max_turns=8,
+    )
+    return str(fallback_result.final_output)
+
+
+async def run_research_agent(topic: Optional[str] = None) -> str:
     """Run the research agent to generate investment advice."""
+    brief = build_research_brief(topic)
+    query = render_research_task(brief)
 
-    # Prepare the user query
-    if topic:
-        query = f"Research this investment topic: {topic}"
-    else:
-        query = DEFAULT_RESEARCH_PROMPT
+    bedrock_region, bedrock_model = _resolve_bedrock_settings()
+    os.environ["AWS_REGION_NAME"] = bedrock_region  # LiteLLM expects this variable
+    os.environ["AWS_REGION"] = bedrock_region
+    os.environ["AWS_DEFAULT_REGION"] = bedrock_region
 
-    # Please override these variables with the region you are using
-    # Other choices: us-west-2 (for OpenAI OSS models) and eu-central-1
-    REGION = "eu-west-1"
-    os.environ["AWS_REGION_NAME"] = REGION  # LiteLLM's preferred variable
-    os.environ["AWS_REGION"] = REGION  # Boto3 standard
-    os.environ["AWS_DEFAULT_REGION"] = REGION  # Fallback
+    model = LitellmModel(model=bedrock_model)
+    context = ResearchRunContext(
+        requested_topic=brief.topic,
+        started_at=datetime.now(UTC).isoformat(),
+    )
 
-    # Please override this variable with the model you are using
-    # Common choices: bedrock/eu.amazon.nova-pro-v1:0 for EU and bedrock/us.amazon.nova-pro-v1:0 for US
-    # or bedrock/amazon.nova-pro-v1:0 if you are not using inference profiles
-    # bedrock/openai.gpt-oss-120b-1:0 for OpenAI OSS models
-    # bedrock/converse/us.anthropic.claude-sonnet-4-20250514-v1:0 for Claude Sonnet 4
-    # NOTE that nova-pro is needed to support tools and MCP servers; nova-lite is not enough - thank you Yuelin L.!
-    MODEL = "bedrock/openai.gpt-oss-120b-1:0"
-    model = LitellmModel(model=MODEL)
+    mcp_timeout_seconds, max_turns, request_timeout_seconds = _resolve_runtime_limits()
 
     # Create and run the agent with MCP server
-    with trace("Researcher"):
-        async with create_playwright_mcp_server(timeout_seconds=60) as playwright_mcp:
-            agent = Agent(
-                name="Alex Investment Researcher",
-                instructions=get_agent_instructions(),
-                model=model,
-                tools=[ingest_financial_document],
-                mcp_servers=[playwright_mcp],
-            )
+    try:
+        with trace("Researcher"):
+            async with create_playwright_mcp_server(
+                timeout_seconds=mcp_timeout_seconds
+            ) as playwright_mcp:
+                agent = Agent[ResearchRunContext](
+                    name="Alex Investment Researcher",
+                    instructions=get_agent_instructions(),
+                    model=model,
+                    tools=[
+                        add_todo_item,
+                        complete_todo_item,
+                        get_todo_status,
+                        record_source,
+                        get_source_log,
+                        ingest_financial_document,
+                    ],
+                    mcp_servers=[playwright_mcp],
+                )
 
-            result = await Runner.run(agent, input=query, max_turns=30) # max_turns=15)
+                result = await asyncio.wait_for(
+                    Runner.run(agent, input=query, context=context, max_turns=max_turns),
+                    timeout=request_timeout_seconds,
+                )
 
-    return result.final_output
+        return str(result.final_output)
+    except (asyncio.TimeoutError, MaxTurnsExceeded, AgentsException, ModelBehaviorError) as e:
+        logging.warning("Primary research flow failed, switching to fallback mode: %s", e)
+        return await _run_fallback_agent(query=query, model=model, context=context)
 
 
 @app.get("/")
@@ -130,6 +220,8 @@ async def research_auto():
 @app.get("/health")
 async def health():
     """Detailed health check."""
+    bedrock_region, bedrock_model = _resolve_bedrock_settings()
+
     # Debug container detection
     container_indicators = {
         "dockerenv": os.path.exists("/.dockerenv"),
@@ -146,7 +238,8 @@ async def health():
         "timestamp": datetime.now(UTC).isoformat(),
         "debug_container": container_indicators,
         "aws_region": os.environ.get("AWS_DEFAULT_REGION", "not set"),
-        "bedrock_model": "bedrock/amazon.nova-pro-v1:0",
+        "bedrock_region": bedrock_region,
+        "bedrock_model": bedrock_model,
     }
 
 
@@ -156,21 +249,21 @@ async def test_bedrock():
     try:
         import boto3
 
-        # Set ALL region environment variables
-        os.environ["AWS_REGION_NAME"] = "us-east-1"
-        os.environ["AWS_REGION"] = "us-east-1"
-        os.environ["AWS_DEFAULT_REGION"] = "us-east-1"
+        bedrock_region, bedrock_model = _resolve_bedrock_settings()
+        os.environ["AWS_REGION_NAME"] = bedrock_region
+        os.environ["AWS_REGION"] = bedrock_region
+        os.environ["AWS_DEFAULT_REGION"] = bedrock_region
 
         # Debug: Check what region boto3 is actually using
         session = boto3.Session()
         actual_region = session.region_name
 
-        # Try to create Bedrock client explicitly in us-west-2
-        client = boto3.client("bedrock-runtime", region_name="us-west-2")
+        # Try to create Bedrock client explicitly in configured region
+        boto3.client("bedrock-runtime", region_name=bedrock_region)
 
         # Debug: Try to list models to verify connection
         try:
-            bedrock_client = boto3.client("bedrock", region_name="us-west-2")
+            bedrock_client = boto3.client("bedrock", region_name=bedrock_region)
             models = bedrock_client.list_foundation_models()
             openai_models = [
                 m["modelId"] for m in models["modelSummaries"] if "openai" in m["modelId"].lower()
@@ -178,8 +271,8 @@ async def test_bedrock():
         except Exception as list_error:
             openai_models = f"Error listing: {str(list_error)}"
 
-        # Try basic model invocation with Nova Pro
-        model = LitellmModel(model="bedrock/amazon.nova-pro-v1:0")
+        # Try basic model invocation with configured model
+        model = LitellmModel(model=bedrock_model)
 
         agent = Agent(
             name="Test Agent",
@@ -193,6 +286,7 @@ async def test_bedrock():
             "status": "success",
             "model": str(model.model),  # Use actual model from LitellmModel
             "region": actual_region,
+            "configured_bedrock_region": bedrock_region,
             "response": result.final_output,
             "debug": {
                 "boto3_session_region": actual_region,

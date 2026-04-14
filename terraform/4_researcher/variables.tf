@@ -25,3 +25,15 @@ variable "scheduler_enabled" {
   type        = bool
   default     = false
 }
+
+variable "bedrock_model_id" {
+  description = "Bedrock model ID used by researcher (without the bedrock/ prefix)"
+  type        = string
+  default     = "openai.gpt-oss-120b-1:0"
+}
+
+variable "bedrock_region" {
+  description = "Bedrock region for model invocation"
+  type        = string
+  default     = "us-west-2"
+}

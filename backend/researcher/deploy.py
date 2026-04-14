@@ -193,6 +193,12 @@ def main():
                                             "ALEX_API_ENDPOINT": os.environ.get(
                                                 "ALEX_API_ENDPOINT", ""
                                             ),
+                                            "BEDROCK_MODEL_ID": os.environ.get(
+                                                "BEDROCK_MODEL_ID", "openai.gpt-oss-120b-1:0"
+                                            ),
+                                            "BEDROCK_REGION": os.environ.get(
+                                                "BEDROCK_REGION", "us-west-2"
+                                            ),
                                         },
                                     },
                                     "ImageRepositoryType": "ECR",
