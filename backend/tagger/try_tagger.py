@@ -203,7 +203,7 @@ class TaggerTest:
 
         # Reminder about Langfuse
         print("\n💡 Check your Langfuse dashboard for traces:")
-        print("   https://us.cloud.langfuse.com")
+        print("   https://eu.cloud.langfuse.com")
 
         return True
 

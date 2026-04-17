@@ -24,8 +24,8 @@ load_dotenv(override=True)
 logger = logging.getLogger(__name__)
 
 # Get configuration
-BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-3-7-sonnet-20250219-v1:0")
-BEDROCK_REGION = os.getenv("BEDROCK_REGION", "us-west-2")
+BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "openai.gpt-oss-120b-1:0")
+BEDROCK_REGION = os.getenv("BEDROCK_REGION", "eu-west-1")
 
 
 class AllocationBreakdown(BaseModel):

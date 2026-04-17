@@ -141,9 +141,9 @@ def create_agent(job_id: str, portfolio_data: Dict[str, Any], db=None):
     """Create the charter agent without tools - will output JSON directly."""
     
     # Get model configuration
-    model_id = os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-3-7-sonnet-20250219-v1:0")
+    model_id = os.getenv("BEDROCK_MODEL_ID", "eu.anthropic.claude-3-7-sonnet-20250219-v1:0")
     # Set region for LiteLLM Bedrock calls
-    bedrock_region = os.getenv("BEDROCK_REGION", "us-west-2")
+    bedrock_region = os.getenv("BEDROCK_REGION", "eu-west-1")
     os.environ["AWS_REGION_NAME"] = bedrock_region
     
     logger.info(f"Charter: Creating agent with model_id={model_id}, region={bedrock_region}")
