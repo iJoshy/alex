@@ -31,9 +31,12 @@ export default function Layout({ children }: LayoutProps) {
               {/* Logo and Brand */}
               <div className="flex items-center gap-8">
                 <Link href="/dashboard" className="flex items-center">
-                  <h1 className="text-xl font-bold text-dark">
-                    Alex <span className="text-primary">AI Financial Advisor</span>
-                  </h1>
+                  <div>
+                    <h1 className="text-xl font-bold text-dark">
+                      Alex <span className="text-primary">for Raenest</span>
+                    </h1>
+                    <p className="text-[11px] text-gray-500">US Shares Intelligence Layer</p>
+                  </div>
                 </Link>
 
                 {/* Navigation Links */}
@@ -77,6 +80,16 @@ export default function Layout({ children }: LayoutProps) {
                     }`}
                   >
                     Analysis
+                  </Link>
+                  <Link
+                    href="/handover"
+                    className={`text-sm font-medium transition-colors ${
+                      isActive("/handover")
+                        ? "text-primary"
+                        : "text-gray-600 hover:text-primary"
+                    }`}
+                  >
+                    Handover
                   </Link>
                 </div>
               </div>
@@ -132,6 +145,16 @@ export default function Layout({ children }: LayoutProps) {
               >
                 Analysis
               </Link>
+              <Link
+                href="/handover"
+                className={`text-sm font-medium transition-colors ${
+                  isActive("/handover")
+                    ? "text-primary"
+                    : "text-gray-600 hover:text-primary"
+                }`}
+              >
+                Handover
+              </Link>
             </div>
           </div>
         </nav>
@@ -146,9 +169,9 @@ export default function Layout({ children }: LayoutProps) {
         {/* Footer */}
         <footer className="bg-white border-t mt-auto">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+            <div className="surface-card-muted p-4">
               <p className="text-sm text-gray-700 font-medium mb-2">
-                Important Disclaimer
+                Important Financial Disclaimer
               </p>
               <p className="text-xs text-gray-600">
                 This AI-generated advice has not been vetted by a qualified financial advisor and should not be used for trading decisions.
@@ -157,7 +180,7 @@ export default function Layout({ children }: LayoutProps) {
             </div>
             <div className="mt-4 pt-4 border-t border-gray-200">
               <p className="text-xs text-gray-500 text-center">
-                © 2025 Alex AI Financial Advisor. Powered by AI agents and built with care.
+                © 2026 Alex x Raenest integration package. Enterprise handover ready.
               </p>
             </div>
           </div>
