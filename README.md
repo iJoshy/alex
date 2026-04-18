@@ -1,223 +1,200 @@
-# Alex - Agentic Learning Equities Explainer
+<div align="center">
+  <h1>Alex - Agentic Learning Equities Explainer</h1>
+  <p><strong>Raenest-ready, multi-agent US shares intelligence platform</strong></p>
+</div>
 
 <p align="center">
-  <img src="assets/alex.png" alt="Alex Banner" width="900" />
+  Built for production workflows: trade sync, portfolio intelligence, AI analysis orchestration, and enterprise handover.
 </p>
-
-<p align="center">
-  <strong>Enterprise-grade, multi-agent financial planning SaaS built on AWS + OpenAI Agents SDK</strong><br/>
-  Researches markets and ingests knowledge.
-</p>
-
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python" />
   <img src="https://img.shields.io/badge/OpenAI%20Agents%20SDK-412991?style=for-the-badge&logo=openai&logoColor=white" alt="OpenAI Agents SDK" />
   <img src="https://img.shields.io/badge/LiteLLM-0f766e?style=for-the-badge" alt="LiteLLM" />
-  <img src="https://img.shields.io/badge/AWS%20Bedrock-FF9900?style=for-the-badge&logo=amazonaws&logoColor=white" alt="Bedrock" />
-  <img src="https://img.shields.io/badge/SageMaker-0ea5e9?style=for-the-badge&logo=amazonaws&logoColor=white" alt="SageMaker" />
+  <img src="https://img.shields.io/badge/AWS%20Bedrock-FF9900?style=for-the-badge&logo=amazonaws&logoColor=white" alt="AWS Bedrock" />
+  <img src="https://img.shields.io/badge/AWS%20Lambda-FF9900?style=for-the-badge&logo=awslambda&logoColor=white" alt="AWS Lambda" />
+  <img src="https://img.shields.io/badge/AWS%20SQS-FF9900?style=for-the-badge&logo=amazonaws&logoColor=white" alt="AWS SQS" />
   <img src="https://img.shields.io/badge/S3%20Vectors-16a34a?style=for-the-badge&logo=amazonaws&logoColor=white" alt="S3 Vectors" />
-  <img src="https://img.shields.io/badge/Lambda-ff9900?style=for-the-badge&logo=awslambda&logoColor=white" alt="Lambda" />
-  <img src="https://img.shields.io/badge/App%20Runner-FF9900?style=for-the-badge&logo=amazonaws&logoColor=white" alt="App Runner" />
+  <img src="https://img.shields.io/badge/Aurora%20Serverless-3b82f6?style=for-the-badge&logo=amazonaws&logoColor=white" alt="Aurora Serverless" />
+  <img src="https://img.shields.io/badge/FastAPI-059669?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/Next.js-111827?style=for-the-badge&logo=nextdotjs&logoColor=white" alt="Next.js" />
+  <img src="https://img.shields.io/badge/Clerk-6D28D9?style=for-the-badge&logo=clerk&logoColor=white" alt="Clerk" />
   <img src="https://img.shields.io/badge/Terraform-7B42BC?style=for-the-badge&logo=terraform&logoColor=white" alt="Terraform" />
-  <img src="https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker" />
 </p>
 
-<br/>
+---
 
-## Table of Contents
+## What This Project Solves
 
-1. [What Alex Does](#what-alex-does)
-2. [Architecture](#architecture)
-3. [Core Features](#core-features)
-4. [Repository Structure](#repository-structure)
-5. [Getting Started](#getting-started)
-6. [Deployment Flow by Guide](#deployment-flow-by-guide)
-7. [Researcher Runtime Tuning](#researcher-runtime-tuning)
-8. [Testing Strategy](#testing-strategy)
-9. [Cost and Operations](#cost-and-operations)
-10. [Troubleshooting](#troubleshooting)
-11. [Roadmap Ideas](#roadmap-ideas)
-12. [Disclaimer](#disclaimer)
+Alex is a production AI system for portfolio intelligence. It now includes a dedicated Raenest integration layer so US-share activity can be synced, analyzed, and surfaced as insights without breaking existing flows.
 
-<br/>
+Core outcomes:
 
-## What Alex Does
+1. Trade events can be synced server-to-server into Alex accounts.
+2. Portfolio intelligence (top holdings, concentration, sector exposure) is returned in API-ready format.
+3. AI analysis jobs can be triggered from backend workflows and tracked through existing queue/orchestration.
+4. The frontend is polished for enterprise ownership with operational status and handover views.
 
-Alex is a multi-agent SaaS financial advisor platform that:
-
-- Researches current market topics using a browsing-capable agent
-- Stores research as semantic vectors for retrieval
-<br/>
+---
 
 ## Architecture
 
 ```mermaid
 graph TB
-    Researcher[Researcher Agent on App Runner] --> Bedrock[AWS Bedrock<br/>gpt-oss-120b]
-    Researcher --> Ingest[Ingest Lambda + API Gateway]
-    Ingest --> SageMaker[SageMaker Embeddings]
-    Ingest --> V[(S3 Vectors)]
+    API[FastAPI Backend] --> Q[SQS Job Queue]
+    Q --> P[Planner Lambda]
+    P --> T[Tagger Lambda]
+    P --> RP[Reporter Lambda]
+    P --> C[Charter Lambda]
+    P --> RT[Retirement Lambda]
+    API --> DB[(Aurora Serverless v2)]
+
+    RAENEST[Raenest Backend] -->|sync-trades / trigger-analysis| API
+    UI[Next.js + Clerk Frontend] --> API
 ```
 
-<br/>
+---
 
-## Core Features
+## Improvements Added
 
-- Multi-agent orchestration with specialized responsibilities
-- Autonomous market research + ingestion pipeline
-- Cost-optimized vector search using S3 Vectors
-- Production-ready deployment using Terraform per-guide modules
-- Cloud-native observability via CloudWatch/App Runner logs
+### 1) Deeper agentic researcher and resilience
 
-<br/>
+1. Structured context engineering with explicit research objective/guardrails.
+2. Run-scoped to-do tools for plan-execute-verify behavior.
+3. Source ledger tools for citation discipline.
+4. Ingestion guard to avoid duplicate writes.
+5. Runtime controls to reduce App Runner 504 risk:
+ - `RESEARCHER_MCP_TIMEOUT_SECONDS`
+ - `RESEARCHER_MAX_TURNS`
+ - `RESEARCHER_REQUEST_TIMEOUT_SECONDS`
+6. Fallback execution path when browsing/tool loops fail.
+7. Model and region moved to environment-driven configuration.
 
-## Repository Structure
+### 2) Raenest server-to-server integration layer
 
-```bash
-alex/
-├── guides/
-│   ├── 1_permissions.md
-│   ├── 2_sagemaker.md
-│   ├── 3_ingest.md
-│   ├── 4_researcher.md
-├── backend/
-│   ├── researcher/
-│   ├── ingest/
-│   └── api/
-├── terraform/
-│   ├── 2_sagemaker/
-│   ├── 3_ingestion/
-│   ├── 4_researcher/
-└── scripts/
+New secured endpoints in `backend/api/main.py`:
+
+1. `POST /api/raenest/sync-trades`
+2. `GET /api/raenest/portfolio-intelligence/{clerk_user_id}`
+3. `POST /api/raenest/trigger-analysis`
+
+Key behavior:
+
+1. Auto-bootstrap user/account if missing.
+2. Buy/sell trade application with position upsert and close-out handling.
+3. Cash and estimated value summaries in USD with optional NGN conversion.
+4. Risk flags (for example concentration >25%).
+5. API key guard via `x-raenest-api-key`.
+
+### 3) Enterprise API readiness and observability
+
+1. Request ID middleware (`x-request-id`) for traceability.
+2. Structured request logs (path, method, status, duration).
+3. Request ID returned in error responses.
+4. Readiness endpoint: `GET /api/ops/readiness`.
+
+### 4) Professional UI and handover readiness
+
+1. Repositioned product branding to "Alex for Raenest".
+2. Added reusable enterprise components:
+ - `frontend/components/EnterpriseStatusStrip.tsx`
+ - `frontend/components/HandoverReadinessCard.tsx`
+3. Updated `dashboard`, `advisor-team`, and `analysis` pages with status chips, trust language, and operational framing.
+4. Added handover center page: `frontend/pages/handover.tsx`.
+5. Introduced reusable style primitives in `frontend/styles/globals.css`:
+ - `.surface-card`, `.surface-card-muted`
+ - `.status-chip` variants
+ - `.enterprise-hero`
+
+---
+
+## Handover Documentation
+
+1. `RAENEST_INTEGRATION.md` - integration contracts and flow.
+2. `ENTERPRISE_HANDOVER.md` - ownership model, SLO starter pack, security baseline.
+3. `UI_HANDOVER.md` - design/UI standards and QA checklist.
+
+---
+
+## API Snapshot
+
+### Health and readiness
+
+1. `GET /health`
+2. `GET /api/ops/readiness`
+
+### Raenest integration
+
+1. `POST /api/raenest/sync-trades`
+2. `GET /api/raenest/portfolio-intelligence/{clerk_user_id}`
+3. `POST /api/raenest/trigger-analysis`
+
+All `/api/raenest/*` endpoints require:
+
+```http
+x-raenest-api-key: <RAENEST_API_KEY>
 ```
 
-<br/>
+---
 
-## Getting Started
+## Configuration
 
-### Prerequisites
-
-- AWS account + configured IAM user (`aws configure`)
-- Terraform `>= 1.5`
-- Docker Desktop running
-- `uv` installed for Python project management
-
-### Local setup
-
-```bash
-# from repo root
-cp .env.example .env
-```
-
-Fill your `.env` with the required values as you progress through guides.
-
-<br/>
-
-## Deployment Flow by Guide
-
-1. `guides/1_permissions.md` - IAM + foundational AWS access
-2. `guides/2_sagemaker.md` - embeddings endpoint
-3. `guides/3_ingest.md` - ingestion lambda + API + S3 vectors
-4. `guides/4_researcher.md` - researcher on App Runner
-
-<br/>
-
-## Researcher Runtime Tuning
-
-These env vars control reliability/latency behavior in `backend/researcher/server.py`:
+Important environment variables:
 
 ```env
+# Bedrock and model
 BEDROCK_MODEL_ID=openai.gpt-oss-120b-1:0
 BEDROCK_REGION=us-west-2
 
+# Researcher resilience controls
 RESEARCHER_MCP_TIMEOUT_SECONDS=30
 RESEARCHER_MAX_TURNS=14
 RESEARCHER_REQUEST_TIMEOUT_SECONDS=75
+
+# Integration security
+RAENEST_API_KEY=replace_with_strong_server_side_key
 ```
 
-Tune recommendations:
+---
 
-- Lower values: faster responses, more fallback usage
-- Higher values: deeper browsing, higher timeout risk
+## Deployment and Guide Flow
 
-<br/>
+Follow the guides in order:
 
-## Testing Strategy
+1. `guides/1_permissions.md`
+2. `guides/2_sagemaker.md`
+3. `guides/3_ingest.md`
+4. `guides/4_researcher.md`
+5. `guides/5_database.md`
+6. `guides/6_agents.md`
+7. `guides/7_frontend.md`
+8. `guides/8_enterprise.md`
 
-- Researcher health and live request:
-```bash
-cd backend/researcher
-uv run test_research.py "MSFT cloud growth outlook"
-```
+Each Terraform directory is independent and requires its own `terraform.tfvars`.
 
-- Ingest/search verification:
-```bash
-cd backend/ingest
-uv run test_search_s3vectors.py
-```
+---
 
-- Agent local smoke tests:
-```bash
-cd backend
-uv run test_simple.py
-```
+## Local Validation (Current)
 
-<br/>
+Latest checks run successfully:
 
-## Cost and Operations
+1. `frontend`: `npm run lint`
+2. `frontend`: `npm run build`
+3. `backend/api`: `uv run uvicorn main:app --help`
 
-Key operational notes:
+---
 
-- S3 Vectors is significantly cheaper than OpenSearch for this use case
-- Destroy infra when inactive to avoid unnecessary spend
+## Security and Compliance Baseline
 
-Example cleanup order:
+1. Keep `RAENEST_API_KEY` server-side only.
+2. Rotate keys/secrets regularly.
+3. Apply least-privilege IAM policies.
+4. Add WAF/IP allowlist for server-to-server endpoints where possible.
+5. Preserve request IDs in incident workflows for auditability.
 
-```bash
-cd terraform/4_researcher && terraform destroy
-cd terraform/3_ingestion && terraform destroy
-cd terraform/2_sagemaker && terraform destroy
-```
-
-<br/>
-
-## Troubleshooting
-
-- `504 upstream request timeout` on researcher:
-  - Usually long browser loops or MCP timeout
-  - Use bounded runtime env vars and fallback mode (already implemented)
-
-- Bedrock model access errors:
-  - Confirm model access in Bedrock region
-  - Confirm `BEDROCK_REGION` and `BEDROCK_MODEL_ID`
-  - LiteLLM requires `AWS_REGION_NAME` to be set
-
-- Packaging failures:
-  - Confirm Docker Desktop is running
-  - Re-run packaging/deploy scripts with logs
-
-<br/>
-
-## Roadmap Ideas
-
-- Add Polygon MCP integration for market-price enrichment
-- Add structured “fact table” extraction pipeline to external DB (e.g., Supabase)
-- Add SQS retry wrappers around researcher-triggered ingestion
-- Add evaluator/critic agent for report quality scoring
-- Add user-facing citation cards sourced from `record_source` ledger
-
-<br/>
+---
 
 ## Disclaimer
 
-Alex is an educational project for learning production AI systems.  
-It is **not financial advice**. Always perform independent due diligence.
-
-<br/>
-
-## Acknowledgements
-
-- Course: **AI in Production** by **Ed Donner**
-- Project: **Alex - Agentic Learning Equities eXplainer**
-
+This project is educational and operationally oriented.  
+It does not provide financial advice. Always involve qualified compliance and investment professionals before production use.
