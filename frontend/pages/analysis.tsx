@@ -11,6 +11,7 @@ import {
 import Layout from '../components/Layout';
 import { API_URL } from '../lib/config';
 import Head from 'next/head';
+import EnterpriseStatusStrip from '../components/EnterpriseStatusStrip';
 
 interface Job {
   id: string;
@@ -490,25 +491,33 @@ export default function Analysis() {
       <div className="min-h-screen bg-gray-50 py-8">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           {/* Header */}
-          <div className="bg-white rounded-lg shadow px-8 py-6 mb-8">
+          <div className="enterprise-hero px-8 py-6 mb-8">
             <div className="flex items-center justify-between">
               <div>
                 <h1 className="text-3xl font-bold text-dark mb-2">Portfolio Analysis Results</h1>
                 <p className="text-gray-600">
                   Completed on {formatDate(job.created_at)}
                 </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <span className="status-chip status-chip-success">AI Completed</span>
+                  <span className="status-chip status-chip-info">Analyst Review Recommended</span>
+                  <span className="status-chip status-chip-warning">Not Financial Advice</span>
+                </div>
               </div>
               <button
                 onClick={() => router.push('/advisor-team')}
-                className="px-6 py-3 bg-ai-accent text-white rounded-lg hover:bg-purple-700 font-semibold"
+                className="px-6 py-3 bg-ai-accent text-white rounded-lg hover:opacity-90 font-semibold"
               >
                 New Analysis
               </button>
             </div>
+            <div className="mt-4">
+              <EnterpriseStatusStrip lastAnalysisDate={job.created_at} />
+            </div>
           </div>
 
           {/* Tabs */}
-          <div className="bg-white rounded-lg shadow mb-8">
+          <div className="surface-card mb-8">
             <div className="border-b border-gray-200">
               <nav className="flex -mb-px">
                 <button
@@ -546,7 +555,7 @@ export default function Analysis() {
           </div>
 
           {/* Tab Content */}
-          <div className="bg-white rounded-lg shadow px-8 py-6">
+          <div className="surface-card px-8 py-6">
             {activeTab === 'overview' && renderOverview()}
             {activeTab === 'charts' && renderCharts()}
             {activeTab === 'retirement' && renderRetirement()}
