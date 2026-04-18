@@ -6,12 +6,14 @@ Handles all API routes with Clerk JWT authentication
 import os
 import json
 import logging
-from typing import Optional, List, Dict, Any
+import time
+from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 from decimal import Decimal
 import uuid
+from collections import defaultdict
 
-from fastapi import FastAPI, HTTPException, Depends, status, Request
+from fastapi import FastAPI, HTTPException, Depends, status, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
@@ -43,6 +45,10 @@ app = FastAPI(
     version="1.0.0"
 )
 
+
+def _request_id_from_request(request: Request) -> str:
+    return getattr(request.state, "request_id", "unknown")
+
 # CORS configuration
 # Get origins from CORS_ORIGINS env var (comma-separated) or fall back to localhost
 cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
@@ -54,13 +60,42 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def add_request_context(request: Request, call_next):
+    """
+    Add request_id tracing and simple latency logging for operational handover.
+    """
+    request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+    request.state.request_id = request_id
+    start = time.perf_counter()
+    response = await call_next(request)
+    elapsed_ms = int((time.perf_counter() - start) * 1000)
+    response.headers["x-request-id"] = request_id
+    logger.info(
+        json.dumps(
+            {
+                "event": "http_request",
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": response.status_code,
+                "duration_ms": elapsed_ms,
+            }
+        )
+    )
+    return response
+
 # Custom exception handlers for better error messages
 @app.exception_handler(ValidationError)
 async def validation_exception_handler(request: Request, exc: ValidationError):
     """Handle Pydantic validation errors with user-friendly messages"""
     return JSONResponse(
         status_code=422,
-        content={"detail": "Invalid input data. Please check your request and try again."}
+        content={
+            "detail": "Invalid input data. Please check your request and try again.",
+            "request_id": _request_id_from_request(request),
+        }
     )
 
 @app.exception_handler(HTTPException)
@@ -79,7 +114,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     message = user_friendly_messages.get(exc.status_code, exc.detail)
     return JSONResponse(
         status_code=exc.status_code,
-        content={"detail": message}
+        content={"detail": message, "request_id": _request_id_from_request(request)}
     )
 
 @app.exception_handler(Exception)
@@ -88,7 +123,10 @@ async def general_exception_handler(request: Request, exc: Exception):
     logger.error(f"Unexpected error: {exc}", exc_info=True)
     return JSONResponse(
         status_code=500,
-        content={"detail": "An unexpected error occurred. Our team has been notified."}
+        content={
+            "detail": "An unexpected error occurred. Our team has been notified.",
+            "request_id": _request_id_from_request(request),
+        }
     )
 
 # Initialize services
@@ -97,6 +135,7 @@ db = Database()
 # SQS client for job queueing
 sqs_client = boto3.client('sqs', region_name=os.getenv('DEFAULT_AWS_REGION', 'us-east-1'))
 SQS_QUEUE_URL = os.getenv('SQS_QUEUE_URL', '')
+RAENEST_API_KEY = os.getenv('RAENEST_API_KEY', '')
 
 # Clerk authentication setup (exactly like saas reference)
 clerk_config = ClerkConfig(jwks_url=os.getenv("CLERK_JWKS_URL"))
@@ -109,6 +148,166 @@ async def get_current_user_id(creds: HTTPAuthorizationCredentials = Depends(cler
     user_id = creds.decoded["sub"]
     logger.info(f"Authenticated user: {user_id}")
     return user_id
+
+
+async def require_raenest_api_key(
+    x_raenest_api_key: Optional[str] = Header(default=None, alias="x-raenest-api-key")
+) -> bool:
+    """Simple server-to-server guard for Raenest integration endpoints."""
+    if not RAENEST_API_KEY:
+        logger.error("RAENEST_API_KEY is not configured")
+        raise HTTPException(status_code=503, detail="Raenest integration is not configured")
+
+    if x_raenest_api_key != RAENEST_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid Raenest API key")
+
+    return True
+
+
+def _ensure_raenest_user(clerk_user_id: str) -> Dict[str, Any]:
+    """Ensure a user exists for external integration flow."""
+    user = db.users.find_by_clerk_id(clerk_user_id)
+    if user:
+        return user
+
+    placeholder_name = f"Raenest User {clerk_user_id[-6:]}" if len(clerk_user_id) >= 6 else "Raenest User"
+    user_data = {
+        "clerk_user_id": clerk_user_id,
+        "display_name": placeholder_name,
+        "years_until_retirement": 20,
+        "target_retirement_income": 60000,
+        "asset_class_targets": {"equity": 80, "fixed_income": 20},
+        "region_targets": {"north_america": 70, "international": 30},
+    }
+    db.users.db.insert("users", user_data, returning="clerk_user_id")
+    logger.info("Created integration user for clerk_user_id=%s", clerk_user_id)
+    return db.users.find_by_clerk_id(clerk_user_id)
+
+
+def _get_or_create_account_for_user(clerk_user_id: str, account_name: str, base_currency: str) -> Dict[str, Any]:
+    """Find existing account by name or create a new one."""
+    user_accounts = db.accounts.find_by_user(clerk_user_id)
+    normalized_name = account_name.strip().lower()
+    for account in user_accounts:
+        if account.get("account_name", "").strip().lower() == normalized_name:
+            return account
+
+    account_purpose = (
+        f"Auto-synced Raenest {base_currency} account for US share trading and AI insights"
+    )
+    account_id = db.accounts.create_account(
+        clerk_user_id=clerk_user_id,
+        account_name=account_name,
+        account_purpose=account_purpose,
+        cash_balance=Decimal("0"),
+    )
+    return db.accounts.find_by_id(account_id)
+
+
+def _ensure_instrument_exists(symbol: str) -> None:
+    """Create a minimal instrument placeholder for newly traded US stocks."""
+    symbol = symbol.upper().strip()
+    if db.instruments.find_by_symbol(symbol):
+        return
+
+    from src.schemas import InstrumentCreate
+
+    instrument_data = InstrumentCreate(
+        symbol=symbol,
+        name=f"{symbol} - Raenest Imported",
+        instrument_type="stock",
+        current_price=Decimal("0"),
+        allocation_regions={"north_america": 100},
+        allocation_sectors={"other": 100},
+        allocation_asset_class={"equity": 100},
+    )
+    db.instruments.create_instrument(instrument_data)
+    logger.info("Created instrument placeholder for %s", symbol)
+
+
+def _compute_portfolio_intelligence(
+    clerk_user_id: str, fx_rate_ngn_per_usd: Optional[Decimal] = None
+) -> Dict[str, Any]:
+    """Build an integration-friendly portfolio intelligence snapshot."""
+    user_accounts = db.accounts.find_by_user(clerk_user_id)
+    total_cash_usd = Decimal("0")
+    total_market_value_usd = Decimal("0")
+    holdings: List[Dict[str, Any]] = []
+    sector_bucket: Dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
+
+    for account in user_accounts:
+        account_id = account["id"]
+        total_cash_usd += Decimal(str(account.get("cash_balance") or 0))
+
+        positions = db.positions.find_by_account(account_id)
+        for pos in positions:
+            symbol = pos["symbol"]
+            quantity = Decimal(str(pos.get("quantity") or 0))
+            instrument = db.instruments.find_by_symbol(symbol) or {}
+            current_price = Decimal(str(instrument.get("current_price") or 0))
+            market_value = quantity * current_price
+            total_market_value_usd += market_value
+
+            holdings.append(
+                {
+                    "account_id": account_id,
+                    "symbol": symbol,
+                    "quantity": float(quantity),
+                    "price_usd": float(current_price),
+                    "market_value_usd": float(market_value),
+                }
+            )
+
+            for sector, pct in (instrument.get("allocation_sectors") or {}).items():
+                sector_bucket[sector] += market_value * (Decimal(str(pct)) / Decimal("100"))
+
+    holdings.sort(key=lambda x: x["market_value_usd"], reverse=True)
+    top_holdings = holdings[:5]
+
+    total_portfolio_usd = total_cash_usd + total_market_value_usd
+    sector_exposure = []
+    if total_market_value_usd > 0:
+        for sector, value in sector_bucket.items():
+            sector_exposure.append(
+                {
+                    "sector": sector,
+                    "weight_pct": float((value / total_market_value_usd) * Decimal("100")),
+                }
+            )
+        sector_exposure.sort(key=lambda x: x["weight_pct"], reverse=True)
+
+    concentration_flags = []
+    if total_market_value_usd > 0:
+        for holding in top_holdings:
+            weight = Decimal(str(holding["market_value_usd"])) / total_market_value_usd
+            if weight >= Decimal("0.25"):
+                concentration_flags.append(
+                    {
+                        "symbol": holding["symbol"],
+                        "weight_pct": float(weight * Decimal("100")),
+                        "message": "Position exceeds 25% concentration threshold",
+                    }
+                )
+
+    response = {
+        "clerk_user_id": clerk_user_id,
+        "accounts": len(user_accounts),
+        "total_cash_usd": float(total_cash_usd),
+        "total_market_value_usd": float(total_market_value_usd),
+        "total_portfolio_value_usd": float(total_portfolio_usd),
+        "top_holdings": top_holdings,
+        "sector_exposure": sector_exposure,
+        "concentration_flags": concentration_flags,
+    }
+
+    if fx_rate_ngn_per_usd and fx_rate_ngn_per_usd > 0:
+        rate = Decimal(str(fx_rate_ngn_per_usd))
+        response["fx_rate_ngn_per_usd"] = float(rate)
+        response["total_portfolio_value_ngn"] = float(total_portfolio_usd * rate)
+        response["total_market_value_ngn"] = float(total_market_value_usd * rate)
+        response["total_cash_ngn"] = float(total_cash_usd * rate)
+
+    return response
 
 # Request/Response models
 class UserResponse(BaseModel):
@@ -141,12 +340,86 @@ class AnalyzeResponse(BaseModel):
     job_id: str
     message: str
 
+TradeSide = Literal["buy", "sell"]
+
+
+class RaenestTrade(BaseModel):
+    """Represents a settled trade event from Raenest."""
+
+    symbol: str = Field(..., min_length=1, max_length=20, description="US stock ticker")
+    side: TradeSide
+    quantity: Decimal = Field(..., gt=0, description="Executed share quantity")
+    price_usd: Decimal = Field(..., ge=0, description="Execution price in USD")
+    fee_usd: Decimal = Field(default=Decimal("0"), ge=0, description="Execution fee in USD")
+    executed_at: Optional[str] = Field(
+        default=None, description="Trade execution timestamp in ISO-8601 format"
+    )
+
+
+class RaenestTradeSyncRequest(BaseModel):
+    """Batch trade sync payload for Raenest -> Alex."""
+
+    clerk_user_id: str = Field(..., description="Mapped user id in Alex/Clerk")
+    account_name: str = Field(
+        default="Raenest US Stocks",
+        description="Target account in Alex where trades should be reflected",
+    )
+    base_currency: Literal["NGN", "USD"] = Field(default="NGN")
+    fx_rate_ngn_per_usd: Optional[Decimal] = Field(
+        default=None, ge=0, description="Optional FX conversion rate used by Raenest"
+    )
+    trades: List[RaenestTrade] = Field(
+        ..., min_length=1, description="List of trade events to apply in order"
+    )
+
+
+class RaenestTradeSyncResponse(BaseModel):
+    """Response after applying trade events."""
+
+    clerk_user_id: str
+    account_id: str
+    account_name: str
+    trades_applied: int
+    positions_touched: int
+    account_cash_balance_usd: float
+    estimated_account_value_usd: float
+    estimated_account_value_ngn: Optional[float] = None
+
+
+class RaenestAnalysisTriggerRequest(BaseModel):
+    """Trigger AI analysis for a user after sync/events."""
+
+    clerk_user_id: str
+    analysis_type: str = Field(default="portfolio_analysis")
+    options: Dict[str, Any] = Field(default_factory=dict)
+
 # API Routes
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+
+
+@app.get("/api/ops/readiness")
+async def readiness_check():
+    """
+    Operational readiness snapshot for handover teams.
+    Returns only boolean config state (no secrets).
+    """
+    checks = {
+        "aurora_cluster_arn_configured": bool(os.getenv("AURORA_CLUSTER_ARN")),
+        "aurora_secret_arn_configured": bool(os.getenv("AURORA_SECRET_ARN")),
+        "sqs_queue_configured": bool(SQS_QUEUE_URL),
+        "clerk_jwks_configured": bool(os.getenv("CLERK_JWKS_URL")),
+        "raenest_api_key_configured": bool(RAENEST_API_KEY),
+    }
+    overall = all(checks.values())
+    return {
+        "status": "ready" if overall else "degraded",
+        "timestamp": datetime.now().isoformat(),
+        "checks": checks,
+    }
 
 @app.get("/api/user", response_model=UserResponse)
 async def get_or_create_user(
@@ -535,6 +808,169 @@ async def trigger_analysis(request: AnalyzeRequest, clerk_user_id: str = Depends
     except Exception as e:
         logger.error(f"Error triggering analysis: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/raenest/sync-trades", response_model=RaenestTradeSyncResponse)
+async def raenest_sync_trades(
+    request: RaenestTradeSyncRequest, _authorized: bool = Depends(require_raenest_api_key)
+):
+    """
+    Server-to-server endpoint for Raenest trade sync.
+    Applies buy/sell trades to positions, keeps cash in sync, and returns updated account snapshot.
+    """
+    try:
+        _ensure_raenest_user(request.clerk_user_id)
+        account = _get_or_create_account_for_user(
+            clerk_user_id=request.clerk_user_id,
+            account_name=request.account_name,
+            base_currency=request.base_currency,
+        )
+        account_id = account["id"]
+
+        # Build mutable position map for deterministic trade application
+        current_positions = db.positions.find_by_account(account_id)
+        position_map: Dict[str, Dict[str, Any]] = {
+            p["symbol"].upper(): p for p in current_positions
+        }
+
+        cash_balance = Decimal(str(account.get("cash_balance") or 0))
+        touched_symbols = set()
+
+        for trade in request.trades:
+            symbol = trade.symbol.upper().strip()
+            _ensure_instrument_exists(symbol)
+            touched_symbols.add(symbol)
+
+            quantity = Decimal(str(trade.quantity))
+            price_usd = Decimal(str(trade.price_usd))
+            fee_usd = Decimal(str(trade.fee_usd or 0))
+            delta = quantity if trade.side == "buy" else -quantity
+
+            existing = position_map.get(symbol)
+            current_qty = Decimal(str(existing.get("quantity") if existing else 0))
+            updated_qty = current_qty + delta
+
+            if updated_qty < 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid sell quantity for {symbol}: position would go negative",
+                )
+
+            # Cash movement based on executed trade
+            gross = quantity * price_usd
+            if trade.side == "buy":
+                cash_balance -= gross + fee_usd
+            else:
+                cash_balance += gross - fee_usd
+
+            if updated_qty == 0 and existing:
+                db.positions.delete(existing["id"])
+                position_map.pop(symbol, None)
+                continue
+
+            db.positions.add_position(account_id=account_id, symbol=symbol, quantity=updated_qty)
+            refreshed_positions = db.positions.find_by_account(account_id)
+            refreshed_map = {p["symbol"].upper(): p for p in refreshed_positions}
+            position_map = refreshed_map
+
+        db.accounts.update(account_id, {"cash_balance": cash_balance})
+        portfolio_value = db.positions.get_portfolio_value(account_id)
+
+        response = RaenestTradeSyncResponse(
+            clerk_user_id=request.clerk_user_id,
+            account_id=str(account_id),
+            account_name=account["account_name"],
+            trades_applied=len(request.trades),
+            positions_touched=len(touched_symbols),
+            account_cash_balance_usd=float(cash_balance),
+            estimated_account_value_usd=portfolio_value.get("total_value", 0.0),
+            estimated_account_value_ngn=(
+                float(Decimal(str(portfolio_value.get("total_value", 0.0))) * request.fx_rate_ngn_per_usd)
+                if request.fx_rate_ngn_per_usd and request.fx_rate_ngn_per_usd > 0
+                else None
+            ),
+        )
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error syncing Raenest trades: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to sync Raenest trades")
+
+
+@app.get("/api/raenest/portfolio-intelligence/{clerk_user_id}")
+async def raenest_portfolio_intelligence(
+    clerk_user_id: str,
+    fx_rate_ngn_per_usd: Optional[Decimal] = None,
+    _authorized: bool = Depends(require_raenest_api_key),
+):
+    """
+    Integration-friendly snapshot for Raenest UI:
+    portfolio value, top holdings, sector exposure, and concentration alerts.
+    """
+    try:
+        user = db.users.find_by_clerk_id(clerk_user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        return _compute_portfolio_intelligence(
+            clerk_user_id=clerk_user_id,
+            fx_rate_ngn_per_usd=fx_rate_ngn_per_usd,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error building Raenest portfolio intelligence: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to build portfolio intelligence")
+
+
+@app.post("/api/raenest/trigger-analysis", response_model=AnalyzeResponse)
+async def raenest_trigger_analysis(
+    request: RaenestAnalysisTriggerRequest, _authorized: bool = Depends(require_raenest_api_key)
+):
+    """
+    Server-to-server analysis trigger for Raenest orchestration.
+    Creates a job and pushes it to SQS for planner execution.
+    """
+    try:
+        user = db.users.find_by_clerk_id(request.clerk_user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        job_id = db.jobs.create_job(
+            clerk_user_id=request.clerk_user_id,
+            job_type="portfolio_analysis",
+            request_payload={
+                "analysis_type": request.analysis_type,
+                "options": request.options,
+                "source": "raenest_integration",
+                "triggered_at": datetime.now().isoformat(),
+            },
+        )
+
+        if SQS_QUEUE_URL:
+            message = {
+                "job_id": str(job_id),
+                "clerk_user_id": request.clerk_user_id,
+                "analysis_type": request.analysis_type,
+                "options": request.options,
+                "source": "raenest_integration",
+            }
+            sqs_client.send_message(QueueUrl=SQS_QUEUE_URL, MessageBody=json.dumps(message))
+            logger.info(f"Sent Raenest analysis job to SQS: {job_id}")
+        else:
+            logger.warning("SQS_QUEUE_URL not configured, Raenest analysis job not queued")
+
+        return AnalyzeResponse(
+            job_id=str(job_id),
+            message="Raenest analysis started. Poll /api/jobs/{job_id} for status/results.",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error triggering Raenest analysis: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to trigger Raenest analysis")
 
 @app.get("/api/jobs/{job_id}")
 async def get_job_status(job_id: str, clerk_user_id: str = Depends(get_current_user_id)):

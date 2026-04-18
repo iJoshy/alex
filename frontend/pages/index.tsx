@@ -6,14 +6,17 @@ export default function Home() {
   return (
     <>
       <Head>
-        <title>Alex AI Financial Advisor - Intelligent Portfolio Management</title>
+        <title>Alex for Raenest - US Shares Intelligence Platform</title>
       </Head>
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-gray-50">
       {/* Navigation */}
       <nav className="px-8 py-6 bg-white shadow-sm">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
-          <div className="text-2xl font-bold text-dark">
-            Alex <span className="text-primary">AI Financial Advisor</span>
+          <div>
+            <div className="text-2xl font-bold text-dark">
+              Alex <span className="text-primary">for Raenest</span>
+            </div>
+            <p className="text-xs text-gray-500">US Shares Intelligence Platform</p>
           </div>
           <div className="flex gap-4">
             <SignedOut>
@@ -46,11 +49,11 @@ export default function Home() {
       <section className="px-8 py-20">
         <div className="max-w-7xl mx-auto text-center">
           <h1 className="text-5xl font-bold text-dark mb-6">
-            Your AI-Powered Financial Future
+            Institutional-Grade Intelligence for US Shares
           </h1>
           <p className="text-xl text-gray-600 mb-8 max-w-3xl mx-auto">
-            Experience the power of autonomous AI agents working together to analyze your portfolio, 
-            plan your retirement, and optimize your investments.
+            Alex helps Raenest users understand concentration risk, portfolio diversification, and
+            retirement impact with transparent AI-driven analysis.
           </p>
           <div className="flex gap-6 justify-center">
             <SignedOut>

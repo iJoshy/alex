@@ -5,6 +5,7 @@ import Layout from '../components/Layout';
 import { API_URL } from '../lib/config';
 import { emitAnalysisCompleted, emitAnalysisFailed, emitAnalysisStarted } from '../lib/events';
 import Head from 'next/head';
+import EnterpriseStatusStrip from '../components/EnterpriseStatusStrip';
 
 interface Agent {
   icon: string;
@@ -261,6 +262,10 @@ export default function AdvisorTeam() {
     return progress.activeAgents.includes(agentName);
   };
 
+  const lastCompletedJob = jobs
+    .filter((job) => job.status === "completed")
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+
   return (
     <>
       <Head>
@@ -269,18 +274,21 @@ export default function AdvisorTeam() {
       <Layout>
       <div className="min-h-screen bg-gray-50 py-8">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="bg-white rounded-lg shadow px-8 py-6 mb-8">
+          <div className="enterprise-hero px-8 py-6 mb-8">
             <h1 className="text-3xl font-bold text-dark mb-2">Your AI Advisory Team</h1>
             <p className="text-gray-600">
               Meet your team of specialized AI agents that work together to provide comprehensive financial analysis.
             </p>
+            <div className="mt-4">
+              <EnterpriseStatusStrip lastAnalysisDate={lastCompletedJob?.created_at || null} />
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
             {agents.map((agent) => (
               <div
                 key={agent.name}
-                className={`bg-white rounded-lg shadow-lg p-6 relative overflow-hidden transition-all duration-300 ${
+                className={`surface-card p-6 relative overflow-hidden transition-all duration-300 ${
                   isAgentActive(agent.name) ? 'ring-4 ring-ai-accent ring-opacity-50' : ''
                 }`}
               >
@@ -305,7 +313,7 @@ export default function AdvisorTeam() {
             ))}
           </div>
 
-          <div className="bg-white rounded-lg shadow px-8 py-6">
+          <div className="surface-card px-8 py-6">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-semibold text-dark">Analysis Center</h2>
               <button
